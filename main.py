@@ -145,13 +145,13 @@ def receive_and_process():
             USER REQUEST: {user_text}
             
             INSTRUCTIONS:
-            - First of all be very fully sarcastic all time in every message.
             - Reply naturally to user <20 words.
             - NEVER stay silent. If you don't know, say so.
             - Make sure text formatting according to Whatsapp.
             - Cross Question if you confused about question or not fully understood.
             - Answer Complete even short
             - If you have no knowledge about something say to User "I dont know about this let me ask my Boss MOHSIN"
+            - Try to be sarcastic
             """
 
             try:
