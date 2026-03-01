@@ -13,7 +13,7 @@ SUPA_URL = os.environ.get("SUPABASE_URL")
 SUPA_KEY = os.environ.get("SUPABASE_KEY")
 
 BOT_PHONE = "923468415931@c.us" 
-MOHSIN_PHONE = "923053296062@c.us" # <-- YOUR NUMBER
+MOHSIN_PHONE = "923053296062@c.us" # <--- ENSURE THIS IS YOUR EXACT NUMBER
 
 client = Groq(api_key=GROQ_API_KEY)
 supabase = create_client(SUPA_URL, SUPA_KEY)
@@ -21,56 +21,35 @@ BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
 
 last_reply_time = 0
 
-# --- 2. FILE & KNOWLEDGE FUNCTIONS ---
+# --- 2. CORE FUNCTIONS ---
 
-def handle_file_upload(body):
-    """Detects if Mohsin sent a file and saves its details."""
-    message_data = body.get("messageData", {})
-    file_type = None
-    file_info = {}
-
-    if "documentMessageData" in message_data:
-        file_type = "Document"
-        file_info = message_data["documentMessageData"]
-    elif "imageMessageData" in message_data:
-        file_type = "Image"
-        file_info = message_data["imageMessageData"]
-    
-    if file_type:
-        f_name = file_info.get("fileName", f"File_{int(time.time())}")
-        f_url = file_info.get("downloadUrl")
-        # Save to Supabase as a factual record
-        fact = f"{file_type} Available: The file '{f_name}' can be found here: {f_url}"
-        supabase.table("knowledge").insert({"info": fact}).execute()
-        return f_name
-    return None
-
-def organize_and_save(raw_text):
-    """Organizes text updates from Mohsin."""
+def save_to_db(info_text, msg_id=None):
+    """Saves text facts or File IDs to Supabase."""
     try:
-        if "✅" in raw_text: return None
-        response = client.chat.completions.create(
-            messages=[{"role": "user", "content": f"Organize this university fact: {raw_text}"}],
-            model="llama-3.3-70b-versatile",
-        )
-        fact = response.choices[0].message.content
-        supabase.table("knowledge").insert({"info": fact}).execute()
-        return fact
-    except: return None
+        data = {"info": info_text}
+        if msg_id:
+            data["message_id"] = msg_id
+        supabase.table("knowledge").insert(data).execute()
+        return True
+    except Exception as e:
+        print(f"❌ DB Error: {e}")
+        return False
+
+def forward_file(chat_id, message_id):
+    """Uses the API you provided to forward a specific file message."""
+    url = f"{BASE_URL}/forwardMessages/{API_TOKEN}"
+    payload = {
+        "chatId": chat_id,
+        "messages": [message_id] # Must be a list
+    }
+    requests.post(url, json=payload)
 
 def get_combined_knowledge():
-    cloud_data = ""
     try:
         data = supabase.table("knowledge").select("info").execute()
-        cloud_data = " ".join([row['info'] for row in data.data])
-    except: pass
-    
-    local_data = ""
-    try:
-        if os.path.exists("knowledge_base.txt"):
-            with open("knowledge_base.txt", "r") as f: local_data = f.read()
-    except: pass
-    return f"{local_data} {cloud_data}"
+        cloud_info = " ".join([row['info'] for row in data.data])
+        return cloud_info
+    except: return ""
 
 def send_message(chat_id, text):
     requests.post(f"{BASE_URL}/sendMessage/{API_TOKEN}", json={"chatId": chat_id, "message": text})
@@ -79,66 +58,74 @@ def send_message(chat_id, text):
 
 def receive_and_process():
     global last_reply_time
-    receive_url = f"{BASE_URL}/receiveNotification/{API_TOKEN}"
-    response = requests.get(receive_url)
+    response = requests.get(f"{BASE_URL}/receiveNotification/{API_TOKEN}")
     
     if response.status_code == 200 and response.json():
         data = response.json()
         receipt_id = data.get("receiptId")
         body = data.get("body", {})
         sender_id = body.get("senderData", {}).get("chatId", "")
-
-        # 1. DELETE NOTIFICATION IMMEDIATELY (Anti-Burst)
+        
+        # 1. DELETE IMMEDIATELY & IDENTITY CHECK
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
-
-        # 2. BOT IDENTITY CHECK
         if sender_id == BOT_PHONE: return
 
-        # 3. MESSAGE EXTRACTION
         message_data = body.get("messageData", {})
+        msg_id_received = body.get("idMessage")
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "")
 
         # --- A. TEACHING MODE (MOHSIN) ---
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
-            # Check for Files first
-            file_name = handle_file_upload(body)
-            if file_name:
-                send_message(sender_id, f"✅ File '{file_name}' added to memory.")
+            # Check for Files (Document/Image)
+            is_file = "documentMessageData" in message_data or "imageMessageData" in message_data
+            if is_file:
+                f_name = message_data.get("documentMessageData", {}).get("fileName") or "Image File"
+                save_to_db(f"FILE_ID: {msg_id_received} | NAME: {f_name}")
+                send_message(sender_id, f"✅ File '{f_name}' indexed for forwarding.")
                 return
             
-            # If no file, treat as Text Update
-            if user_text:
-                fact = organize_and_save(user_text)
-                if fact: send_message(sender_id, f"✅ Saved: {fact}")
+            # If text, organize and save
+            if user_text and "✅" not in user_text:
+                res = client.chat.completions.create(
+                    messages=[{"role": "user", "content": f"Briefly structure this fact: {user_text}"}],
+                    model="llama-3.3-70b-versatile",
+                )
+                fact = res.choices[0].message.content
+                save_to_db(fact)
+                send_message(sender_id, f"✅ Saved: {fact}")
             return
 
         # --- B. ASSISTANT MODE (GROUP) ---
         if "@cr" in user_text.lower():
-            # Anti-Spam Cooldown (5 seconds)
-            if time.time() - last_reply_time < 5: return
-
-            # Show "typing..."
-            requests.post(f"{BASE_URL}/setPresence/{API_TOKEN}", json={"chatId": sender_id, "presence": "composing"})
-            time.sleep(random.uniform(3, 6))
+            if time.time() - last_reply_time < 5: return # Cooldown
 
             context = get_combined_knowledge()
+            prompt = f"Context: {context}\n\nUser: {user_text}\n\nRule: If user wants a file, reply ONLY with 'FWD:' followed by the MessageID from context. Otherwise, answer briefly (<20 words)."
+            
             try:
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": f"Context: {context}. Rule: If asked for a file/link, give the full URL. Max 25 words. No @ tags."},
-                        {"role": "user", "content": user_text}
-                    ],
+                # Human delay
+                requests.post(f"{BASE_URL}/setPresence/{API_TOKEN}", json={"chatId": sender_id, "presence": "composing"})
+                time.sleep(random.uniform(3, 6))
+
+                ai_res = client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
                     model="llama-3.3-70b-versatile",
                 )
-                answer = chat_completion.choices[0].message.content
-                send_message(sender_id, answer.replace("@", ""))
+                answer = ai_res.choices[0].message.content
+
+                if "FWD:" in answer:
+                    target_id = answer.split("FWD:")[1].strip()
+                    forward_file(sender_id, target_id)
+                else:
+                    send_message(sender_id, answer.replace("@", ""))
+                
                 last_reply_time = time.time()
             except Exception as e: print(f"⚠️ AI Error: {e}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (File & Cloud Mode) Online.")
+    print("🚀 IUB Assistant (Forwarding Mode) is running...")
     while True:
         try: receive_and_process()
-        except Exception as e: print(f"⚠️ System Error: {e}")
+        except: pass
         time.sleep(2)
