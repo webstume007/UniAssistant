@@ -13,7 +13,7 @@ SUPA_URL = os.environ.get("SUPABASE_URL")
 SUPA_KEY = os.environ.get("SUPABASE_KEY")
 
 BOT_PHONE = "923468415931@c.us" 
-MOHSIN_PHONE = "923053296062@c.us" # Your official number
+MOHSIN_PHONE = "923053296062@c.us" # Your verified ID
 
 client = Groq(api_key=GROQ_API_KEY)
 supabase = create_client(SUPA_URL, SUPA_KEY)
@@ -21,59 +21,71 @@ BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
 
 last_reply_time = 0
 
-# --- 2. DATA & UTILITY FUNCTIONS (ALL PREVIOUS LOGIC) ---
+# --- 2. DATA & MEMORY FUNCTIONS ---
 
 def save_to_db(info_text, msg_id=None):
-    """Saves text or File IDs to Supabase."""
+    """Saves static facts or File IDs to Supabase."""
     try:
         data = {"info": str(info_text)}
-        if msg_id:
-            data["message_id"] = str(msg_id)
+        if msg_id: data["message_id"] = str(msg_id)
         supabase.table("knowledge").insert(data).execute()
         return True
     except Exception as e:
-        print(f"❌ DB Error: {e}")
+        print(f"❌ Knowledge DB Error: {e}")
         return False
 
 def get_combined_knowledge():
-    """Pulls facts and labels files clearly for the AI."""
+    """Pulls all facts and file records from Supabase."""
     try:
         data = supabase.table("knowledge").select("info", "message_id").execute()
-        history = []
-        for row in data.data:
-            if row.get('message_id'):
-                # Labeling files clearly so AI can match them
-                history.append(f"DATABASE_FILE: Name='{row['info']}', MessageID='{row['message_id']}'")
+        lines = []
+        for r in data.data:
+            if r.get('message_id'):
+                lines.append(f"DATABASE_FILE: Name='{r['info']}', ID='{r['message_id']}'")
             else:
-                history.append(f"FACT: {row['info']}")
-        return "\n".join(history)
-    except: return ""
+                lines.append(f"FACT: {r['info']}")
+        return "\n".join(lines) if lines else "No class data yet."
+    except: return "Database connection offline."
+
+def save_chat_history(user_id, message, role):
+    """Saves the conversation flow to provide memory."""
+    try:
+        supabase.table("chat_history").insert({
+            "user_id": user_id, "message": str(message), "role": role
+        }).execute()
+    except: pass
+
+def get_chat_history(user_id, limit=5):
+    """Retrieves the last few messages for a specific user."""
+    try:
+        data = supabase.table("chat_history").select("message", "role")\
+            .eq("user_id", user_id).order("created_at", desc=True).limit(limit).execute()
+        history = []
+        for row in reversed(data.data):
+            history.append({"role": row['role'], "content": row['message']})
+        return history
+    except: return []
+
+# --- 3. WHATSAPP ACTIONS ---
 
 def set_typing_status(chat_id):
-    """Makes the bot look human by showing 'typing...'"""
-    url = f"{BASE_URL}/setPresence/{API_TOKEN}"
-    payload = {"chatId": chat_id, "presence": "composing"}
-    requests.post(url, json=payload)
+    requests.post(f"{BASE_URL}/setPresence/{API_TOKEN}", json={"chatId": chat_id, "presence": "composing"})
 
 def send_message(chat_id, text):
-    """Sends a standard text message."""
-    url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
-    payload = {"chatId": chat_id, "message": text}
-    requests.post(url, json=payload)
+    requests.post(f"{BASE_URL}/sendMessage/{API_TOKEN}", json={"chatId": chat_id, "message": text})
 
 def forward_file(chat_id, message_id):
-    """Native Forwarding via the API you shared."""
+    """Uses Native Forwarding API."""
     url = f"{BASE_URL}/forwardMessages/{API_TOKEN}"
     payload = {"chatId": chat_id, "messages": [message_id]}
     res = requests.post(url, json=payload)
-    print(f"🚀 Forwarding Attempt: {res.status_code} | ID: {message_id}")
+    print(f"🚀 Forward Result: {res.status_code} for ID {message_id}")
 
-# --- 3. MAIN LOGIC (THE FULL ENGINE) ---
+# --- 4. MAIN ENGINE ---
 
 def receive_and_process():
     global last_reply_time
-    receive_url = f"{BASE_URL}/receiveNotification/{API_TOKEN}"
-    response = requests.get(receive_url)
+    response = requests.get(f"{BASE_URL}/receiveNotification/{API_TOKEN}")
     
     if response.status_code == 200 and response.json():
         data = response.json()
@@ -81,7 +93,7 @@ def receive_and_process():
         body = data.get("body", {})
         sender_id = body.get("senderData", {}).get("chatId", "")
         
-        # Identity and Loop Protection
+        # Identity Protection
         if not receipt_id or sender_id == BOT_PHONE:
             if receipt_id: requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
@@ -95,70 +107,55 @@ def receive_and_process():
                     message_data.get("extendedTextMessageData", {}).get("text", "") or \
                     message_data.get("documentMessageData", {}).get("caption", "") or ""
 
-        # --- A. TEACHING MODE (MOHSIN) ---
+        # --- MODE A: TEACHING (MOHSIN) ---
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
-            
-            # 1. HANDLE PDF/DOCS
             if type_msg == "documentMessage":
-                doc_info = message_data.get("documentMessageData", {})
-                f_name = doc_info.get("fileName") or user_text or f"Doc_{int(time.time())}"
+                f_name = message_data.get("documentMessageData", {}).get("fileName") or user_text or "PDF"
                 if save_to_db(f_name, msg_id=msg_id_received):
-                    send_message(sender_id, f"✅ PDF '{f_name}' indexed. ForwardID: {msg_id_received}")
+                    send_message(sender_id, f"✅ PDF '{f_name}' Indexed for forwarding.")
             
-            # 2. HANDLE TEXT UPDATES (AUTO-ORGANIZER)
             elif user_text and "✅" not in user_text:
                 try:
                     res = client.chat.completions.create(
-                        messages=[{"role": "user", "content": f"Structure this class update briefly: {user_text}"}],
+                        messages=[{"role": "user", "content": f"Structure this: {user_text}"}],
                         model="llama-3.3-70b-versatile",
                     )
                     fact = res.choices[0].message.content
                     if save_to_db(fact):
-                        send_message(sender_id, f"✅ Organized & Saved: {fact}")
-                except Exception as e:
-                    print(f"⚠️ Groq Organizer Error: {e}")
+                        send_message(sender_id, f"✅ Saved: {fact}")
+                except: pass
             
-            # Delete after processing Mohsin's command
             requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
 
-        # --- B. ASSISTANT MODE (GROUP/@CR) ---
+        # --- MODE B: ASSISTANT (GROUP/@CR) ---
         if "@cr" in user_text.lower():
-            print(f"🔔 Bot Tagged by {sender_id}: '{user_text}'")
-            
-            # 1. ANTI-SPAM COOLDOWN
-            if time.time() - last_reply_time < 8: 
+            # Anti-Spam Cooldown
+            if time.time() - last_reply_time < 6:
                 requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
                 return
 
-            # 2. HUMAN-LIKE DELAY
             set_typing_status(sender_id)
-            time.sleep(random.uniform(4, 7))
+            time.sleep(random.uniform(3, 5))
 
-            # 3. AI PROCESSING
-            context = get_combined_knowledge()
-            prompt = f"""
-            You are the IUB Assistant. 
-            CONTEXT:
-            {context}
+            # Memory & Context
+            kb_context = get_combined_knowledge()
+            chat_mem = get_chat_history(sender_id)
             
-            USER REQUEST: {user_text}
-            
-            INSTRUCTIONS:
-            - Be Brave to answer anything
-            - Usually Reply naturally to user <20 words.
-            - NEVER stay silent. If you don't know, say so.
-            - Make sure text formatting according to Whatsapp.
-            - Cross Question if just only if you confused about a question or not fully understood about study otherwise just reply.
-            - If you have no knowledge about something say to User "I dont know about this let me ask my Boss MOHSIN"
-            """
+            messages = [{"role": "system", "content": f"You are the IUB Assistant. Knowledge: {kb_context}. Rule: If file requested, reply ONLY 'FWD: [ID]'. Else, be brief."}]
+            for m in chat_mem: messages.append(m)
+            messages.append({"role": "user", "content": user_text})
 
             try:
                 chat_completion = client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=messages,
                     model="llama-3.3-70b-versatile",
                 )
                 answer = chat_completion.choices[0].message.content
+                
+                # Save to Memory
+                save_chat_history(sender_id, user_text, "user")
+                save_chat_history(sender_id, answer, "assistant")
 
                 if "FWD:" in answer:
                     target_id = answer.replace("FWD:", "").strip()
@@ -168,18 +165,14 @@ def receive_and_process():
                 
                 last_reply_time = time.time()
             except Exception as e:
-                print(f"⚠️ AI Assistant Error: {e}")
-                send_message(sender_id, "⚠️ I'm having trouble responding. Try again in a minute.")
+                print(f"⚠️ AI Error: {e}")
 
-        # --- FINAL CLEANUP ---
-        # Only delete the notification after the AI has replied
+        # Final Cleanup
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Full Logic Resurrected) Online.")
+    print("🚀 IUB Assistant (Ultimate Memory Mode) starting...")
     while True:
-        try:
-            receive_and_process()
-        except Exception as e:
-            print(f"⚠️ System Loop Error: {e}")
-        time.sleep(2.5)
+        try: receive_and_process()
+        except: pass
+        time.sleep(2)
