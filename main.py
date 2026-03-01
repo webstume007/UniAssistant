@@ -1,47 +1,41 @@
-import os
-import time
-import requests
+import os, time, requests
 from google import genai
 
-# 1. Configuration
+# 1. Configuration & Key Pool
 ID_INSTANCE = os.environ.get("GREEN_API_ID_INSTANCE")
 API_TOKEN = os.environ.get("GREEN_API_TOKEN")
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 BOT_PHONE = "923468415931" 
 
-client = genai.Client(api_key=GEMINI_KEY)
+# Collect all available keys into a list
+keys = [os.environ.get("GEMINI_API_KEY"), os.environ.get("GEMINI_KEY_2"), os.environ.get("GEMINI_KEY_3")]
+api_keys = [k for k in keys if k] # Remove empty ones
+current_key_index = 0
+
 BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
 
-def get_knowledge():
-    try:
-        with open("knowledge_base.txt", "r") as f:
-            return f.read()
-    except:
-        return "IUB AI Assistant. Boss: Mohsin Akhtar (Roll 1118)."
-
-def send_message(chat_id, text):
-    url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
-    payload = {"chatId": chat_id, "message": text}
-    requests.post(url, json=payload)
-
 def get_ai_response(prompt):
-    # Try the Primary 2026 Stable Model first
-    models_to_try = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b"]
-    
-    for model_name in models_to_try:
+    global current_key_index
+    # We will try the model across our pool of keys
+    for _ in range(len(api_keys)):
         try:
-            print(f"🧠 Attempting AI with: {model_name}...")
+            active_key = api_keys[current_key_index]
+            client = genai.Client(api_key=active_key)
+            
+            # Use the most stable 2026 model
             response = client.models.generate_content(
-                model=model_name, 
+                model="gemini-2.0-flash-lite", 
                 contents=prompt
             )
-            if response.text:
-                return response.text
+            return response.text
         except Exception as e:
-            print(f"⚠️ {model_name} failed: {e}")
-            continue # Move to the backup model
-            
-    return "AI is currently unavailable. Ask Mohsin directly."
+            if "429" in str(e):
+                print(f"⚠️ Key {current_key_index} exhausted. Rotating...")
+                current_key_index = (current_key_index + 1) % len(api_keys)
+                continue # Try again with the next key
+            else:
+                print(f"⚠️ AI Error: {e}")
+                return None
+    return "All AI keys are currently at their limit. Try again in 1 minute."
 
 def receive_and_process():
     receive_url = f"{BASE_URL}/receiveNotification/{API_TOKEN}"
@@ -51,38 +45,32 @@ def receive_and_process():
         data = response.json()
         receipt_id = data.get("receiptId")
         body = data.get("body", {})
-        
         sender_id = body.get("senderData", {}).get("chatId", "")
         
-        # ANTI-LOOP: If the bot is the sender, skip
         if BOT_PHONE in sender_id:
             requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
 
         message_data = body.get("messageData", {})
-        user_text = ""
-        if "textMessageData" in message_data:
-            user_text = message_data["textMessageData"].get("textMessage", "")
-        elif "extendedTextMessageData" in message_data:
-            user_text = message_data["extendedTextMessageData"].get("text", "")
+        user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
+                    message_data.get("extendedTextMessageData", {}).get("text", "")
 
-        # TRIGGER: Only @CR and Class Topics
         if user_text and "@cr" in user_text.lower():
-            print(f"📩 Valid @CR request received.")
+            print(f"📩 Processing @CR request via Key Index {current_key_index}...")
             
-            context = get_knowledge()
-            system_instruction = f"Context: {context}. Rule: Only answer class-related info. Else, say 'Ask Mohsin'."
+            # Keeping the prompt small saves 'Input Token' quota
+            system_info = "You are IUB AI Assistant. Only answer class info. Short answers only."
+            answer = get_ai_response(f"{system_info}\n\nQuestion: {user_text}")
             
-            answer = get_ai_response(f"{system_instruction}\n\nQuestion: {user_text}")
             if answer:
-                send_message(sender_id, answer)
-                print("📤 Replied successfully!")
+                url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
+                requests.post(url, json={"chatId": sender_id, "message": answer})
+                print("📤 Replied!")
 
-        # Always delete notification
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Failover Mode) Started...")
+    print(f"🚀 IUB Bot Online with {len(api_keys)} API keys.")
     while True:
         try:
             receive_and_process()
