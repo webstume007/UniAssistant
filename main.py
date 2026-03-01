@@ -50,36 +50,51 @@ def receive_and_process():
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "")
 
-        # TRIGGER: Listen for @CR
-        if user_text and "@cr" in user_text.lower():
-            print(f"📩 Groq Processing @CR request...")
-            context = get_knowledge()
-            
-            try:
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {
-                            "role": "system", 
-                            "content": f"""
-                            You are the IUB Class Assistant. You answer to '@CR'.
-                            STRICT RULES:
-                            1. Reply in less than 20 words.
-                            2. Never mention you are a bot or who developed you unless asked.
-                            3. Use this context: {context}.
-                            4. If topic is not class-related, say: 'Only class queries please.'
-                            """
-                        },
-                        {"role": "user", "content": user_text}
-                    ],
-                    model="llama-3.3-70b-versatile",
-                )
-                
-                answer = chat_completion.choices[0].message.content
-                send_message(sender_id, answer)
-                print("📤 Short Reply Sent!")
-
-        # Always delete the notification
+        # TRIGGER: Listen specifically for @CR
+if user_text and "@cr" in user_text.lower():
+    
+    # 1. DOUBLE PROTECTION: Check if the message is coming from the bot's own number
+    if BOT_PHONE in sender_id:
+        print("🚫 Self-loop detected. Ignoring.")
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
+        return
+
+    print(f"📩 Valid @CR request from {sender_id}...")
+    context = get_knowledge()
+    
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"""
+                    You are the IUB AI Assistant.
+                    RULES:
+                    1. NEVER use the word '@CR' or tag anyone in your response.
+                    2. Keep answers shorter than 15 words.
+                    3. Only discuss class topics from this context: {context}.
+                    4. If the question is random, say: 'Class queries only.'
+                    """
+                },
+                {"role": "user", "content": user_text}
+            ],
+            model="llama-3.3-70b-versatile",
+        )
+        
+        answer = chat_completion.choices[0].message.content
+        
+        # 2. ADDITIONAL CLEANUP: Force remove any accidental @ symbols from the AI
+        clean_answer = answer.replace("@cr", "CR").replace("@CR", "CR").replace("@", "")
+
+        if clean_answer:
+            send_message(sender_id, clean_answer)
+            print("📤 Cleaned Reply Sent!")
+
+    except Exception as e:
+        print(f"⚠️ Groq Error: {e}")
+
+# Always delete the notification
+requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
     print("🚀 IUB Assistant (GROQ MODE) is starting...")
