@@ -17,12 +17,31 @@ def get_knowledge():
         with open("knowledge_base.txt", "r") as f:
             return f.read()
     except:
-        return "IUB AI Assistant for Semester 3. Boss: Mohsin Akhtar."
+        return "IUB AI Assistant. Boss: Mohsin Akhtar (Roll 1118)."
 
 def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
     payload = {"chatId": chat_id, "message": text}
     requests.post(url, json=payload)
+
+def get_ai_response(prompt):
+    # Try the Primary 2026 Stable Model first
+    models_to_try = ["gemini-2.0-flash-lite", "gemini-1.5-flash-8b"]
+    
+    for model_name in models_to_try:
+        try:
+            print(f"🧠 Attempting AI with: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name, 
+                contents=prompt
+            )
+            if response.text:
+                return response.text
+        except Exception as e:
+            print(f"⚠️ {model_name} failed: {e}")
+            continue # Move to the backup model
+            
+    return "AI is currently unavailable. Ask Mohsin directly."
 
 def receive_and_process():
     receive_url = f"{BASE_URL}/receiveNotification/{API_TOKEN}"
@@ -35,7 +54,7 @@ def receive_and_process():
         
         sender_id = body.get("senderData", {}).get("chatId", "")
         
-        # ANTI-LOOP: If bot sends a msg containing @cr, skip it
+        # ANTI-LOOP: If the bot is the sender, skip
         if BOT_PHONE in sender_id:
             requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
@@ -49,33 +68,21 @@ def receive_and_process():
 
         # TRIGGER: Only @CR and Class Topics
         if user_text and "@cr" in user_text.lower():
-            print(f"📩 @CR Request: {user_text}")
+            print(f"📩 Valid @CR request received.")
             
             context = get_knowledge()
-            # Strict Instruction to prevent random chat
-            system_msg = f"You are a strict University Assistant. Context: {context}. Rule: If the question isn't about the context, say 'Ask Mohsin'. Answer shortly."
-
-            try:
-                # 2026 BEST STABLE FREE MODEL
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash-lite", 
-                    contents=f"{system_msg}\n\nQuestion: {user_text}"
-                )
-                
-                if response.text:
-                    send_message(sender_id, response.text)
-                    print("📤 Replied!")
-
-            except Exception as e:
-                print(f"⚠️ AI Error: {e}")
-                if "429" in str(e):
-                    send_message(sender_id, "Rate limit hit. Try in 30 seconds.")
+            system_instruction = f"Context: {context}. Rule: Only answer class-related info. Else, say 'Ask Mohsin'."
+            
+            answer = get_ai_response(f"{system_instruction}\n\nQuestion: {user_text}")
+            if answer:
+                send_message(sender_id, answer)
+                print("📤 Replied successfully!")
 
         # Always delete notification
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Lite Mode) Started...")
+    print("🚀 IUB Assistant (Failover Mode) Started...")
     while True:
         try:
             receive_and_process()
