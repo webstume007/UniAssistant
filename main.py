@@ -12,9 +12,8 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 SUPA_URL = os.environ.get("SUPABASE_URL")
 SUPA_KEY = os.environ.get("SUPABASE_KEY")
 
-# MAKE SURE THESE ARE 100% CORRECT
 BOT_PHONE = "923468415931@c.us" 
-MOHSIN_PHONE = "923XXXXXXXXX@c.us" # Replace with your personal number
+MOHSIN_PHONE = "923053296062@c.us" # <-- YOUR NUMBER
 
 client = Groq(api_key=GROQ_API_KEY)
 supabase = create_client(SUPA_URL, SUPA_KEY)
@@ -22,27 +21,42 @@ BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
 
 last_reply_time = 0
 
-# --- 2. THE ORGANIZER FUNCTION ---
+# --- 2. FILE & KNOWLEDGE FUNCTIONS ---
+
+def handle_file_upload(body):
+    """Detects if Mohsin sent a file and saves its details."""
+    message_data = body.get("messageData", {})
+    file_type = None
+    file_info = {}
+
+    if "documentMessageData" in message_data:
+        file_type = "Document"
+        file_info = message_data["documentMessageData"]
+    elif "imageMessageData" in message_data:
+        file_type = "Image"
+        file_info = message_data["imageMessageData"]
+    
+    if file_type:
+        f_name = file_info.get("fileName", f"File_{int(time.time())}")
+        f_url = file_info.get("downloadUrl")
+        # Save to Supabase as a factual record
+        fact = f"{file_type} Available: The file '{f_name}' can be found here: {f_url}"
+        supabase.table("knowledge").insert({"info": fact}).execute()
+        return f_name
+    return None
 
 def organize_and_save(raw_text):
+    """Organizes text updates from Mohsin."""
     try:
-        # Don't try to organize a message that is already a confirmation
-        if "✅" in raw_text or "Organized & Saved" in raw_text:
-            return None
-
-        organizer_prompt = f"Convert this university update into a short factual sentence: {raw_text}"
-        
+        if "✅" in raw_text: return None
         response = client.chat.completions.create(
-            messages=[{"role": "user", "content": organizer_prompt}],
+            messages=[{"role": "user", "content": f"Organize this university fact: {raw_text}"}],
             model="llama-3.3-70b-versatile",
         )
-        organized_text = response.choices[0].message.content
-        
-        supabase.table("knowledge").insert({"info": organized_text}).execute()
-        return organized_text
-    except Exception as e:
-        print(f"❌ Organizing Error: {e}")
-        return None
+        fact = response.choices[0].message.content
+        supabase.table("knowledge").insert({"info": fact}).execute()
+        return fact
+    except: return None
 
 def get_combined_knowledge():
     cloud_data = ""
@@ -59,9 +73,7 @@ def get_combined_knowledge():
     return f"{local_data} {cloud_data}"
 
 def send_message(chat_id, text):
-    url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
-    payload = {"chatId": chat_id, "message": text}
-    requests.post(url, json=payload)
+    requests.post(f"{BASE_URL}/sendMessage/{API_TOKEN}", json={"chatId": chat_id, "message": text})
 
 # --- 3. MAIN LOGIC ---
 
@@ -76,45 +88,45 @@ def receive_and_process():
         body = data.get("body", {})
         sender_id = body.get("senderData", {}).get("chatId", "")
 
-        # 1. DELETE IMMEDIATELY
+        # 1. DELETE NOTIFICATION IMMEDIATELY (Anti-Burst)
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
-        # 2. STRICT SENDER FILTER (Stop the loop here)
-        if sender_id == BOT_PHONE:
-            return
+        # 2. BOT IDENTITY CHECK
+        if sender_id == BOT_PHONE: return
 
+        # 3. MESSAGE EXTRACTION
         message_data = body.get("messageData", {})
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "")
 
-        if not user_text: return
-
-        # 3. CONTENT FILTER (If the text looks like the bot's own success message, skip)
-        if "✅" in user_text or "Organized & Saved" in user_text:
-            return
-
-        # 4. COOLDOWN CHECK
-        if time.time() - last_reply_time < 5: return
-
-        # --- A. TEACHING MODE ---
+        # --- A. TEACHING MODE (MOHSIN) ---
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
-            fact = organize_and_save(user_text)
-            if fact:
-                send_message(sender_id, f"✅ Organized & Saved: {fact}")
-                last_reply_time = time.time()
+            # Check for Files first
+            file_name = handle_file_upload(body)
+            if file_name:
+                send_message(sender_id, f"✅ File '{file_name}' added to memory.")
+                return
+            
+            # If no file, treat as Text Update
+            if user_text:
+                fact = organize_and_save(user_text)
+                if fact: send_message(sender_id, f"✅ Saved: {fact}")
             return
 
-        # --- B. ASSISTANT MODE ---
+        # --- B. ASSISTANT MODE (GROUP) ---
         if "@cr" in user_text.lower():
+            # Anti-Spam Cooldown (5 seconds)
+            if time.time() - last_reply_time < 5: return
+
             # Show "typing..."
             requests.post(f"{BASE_URL}/setPresence/{API_TOKEN}", json={"chatId": sender_id, "presence": "composing"})
-            time.sleep(random.uniform(3, 5))
+            time.sleep(random.uniform(3, 6))
 
             context = get_combined_knowledge()
             try:
                 chat_completion = client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": f"Context: {context}. Rule: Max 15 words. No @ tags."},
+                        {"role": "system", "content": f"Context: {context}. Rule: If asked for a file/link, give the full URL. Max 25 words. No @ tags."},
                         {"role": "user", "content": user_text}
                     ],
                     model="llama-3.3-70b-versatile",
@@ -122,14 +134,11 @@ def receive_and_process():
                 answer = chat_completion.choices[0].message.content
                 send_message(sender_id, answer.replace("@", ""))
                 last_reply_time = time.time()
-            except Exception as e:
-                print(f"⚠️ AI Error: {e}")
+            except Exception as e: print(f"⚠️ AI Error: {e}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Anti-Loop Fixed) Online.")
+    print("🚀 IUB Assistant (File & Cloud Mode) Online.")
     while True:
-        try:
-            receive_and_process()
-        except Exception as e:
-            print(f"⚠️ System Error: {e}")
+        try: receive_and_process()
+        except Exception as e: print(f"⚠️ System Error: {e}")
         time.sleep(2)
