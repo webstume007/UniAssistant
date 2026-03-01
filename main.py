@@ -48,14 +48,19 @@ def get_combined_knowledge():
     except: return "Database connection offline."
 
 def save_chat_history(user_id, message, role):
-    """Saves the conversation flow to provide memory."""
     try:
+        # We use str() to ensure it's not a dictionary or object
+        clean_message = str(message) 
         supabase.table("chat_history").insert({
-            "user_id": user_id, "message": str(message), "role": role
+            "user_id": str(user_id), 
+            "message": clean_message, 
+            "role": str(role)
         }).execute()
-    except: pass
+        print(f"💾 Memory Saved: {role} -> {user_id}")
+    except Exception as e:
+        print(f"❌ Memory Save Error: {e}")
 
-def get_chat_history(user_id, limit=5):
+def get_chat_history(user_id, limit=50):
     """Retrieves the last few messages for a specific user."""
     try:
         data = supabase.table("chat_history").select("message", "role")\
