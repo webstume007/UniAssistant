@@ -109,14 +109,14 @@ def receive_and_process():
                     send_message(sender_id, f"✅ PDF '{f_name}' indexed for class access.")
             
             elif user_text and "✅" not in user_text:
-                # MODIFIED PROMPT: Prevents SQL/Code output
+                # 🔥 STRICT SECRETARY PROMPT (UPDATED)
                 res = client.chat.completions.create(
-                    messages=[{"role": "user", "content": f"Briefly structure this class update for a database summary. IMPORTANT: Use plain text only. Do not write SQL, code, or technical explanations. Just the facts. Text: {user_text}"}],
+                    messages=[{"role": "user", "content": f"Act as a simple Secretary. Summarize this class update in 1-2 short, plain sentences. DO NOT use lists, DO NOT write SQL, and DO NOT create database tables. Just plain text facts. Text: {user_text}"}],
                     model="llama-3.3-70b-versatile",
                 )
                 fact = res.choices[0].message.content.strip()
                 if save_to_db(fact):
-                    send_message(sender_id, f"✅ Organized & Saved: {fact}")
+                    send_message(sender_id, f"✅ Saved: {fact}")
             
             requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
@@ -133,7 +133,6 @@ def receive_and_process():
             kb_context = get_combined_knowledge()
             chat_mem = get_chat_history(sender_id)
             
-            # THE CORE INSTRUCTIONS
             system_instructions = f"""
             Persona: You are 'Mohsins Personal Assistant', a bot designed to reduce the burden of BOSS Mohsin and help class students at IUB. 
             Tone: Professional, helpful, and concise.
@@ -141,10 +140,9 @@ def receive_and_process():
             
             Rules:
             1. Primarily you are designed to answer questions about Class and study using the data provided in the database.
-            2. If a student asks for a file that is in the Database Content, reply ONLY with 'FWD:' followed by the ID. Example: 'FWD: 3EB0...'
+            2. If a student asks for a file that is in the Database Content, reply ONLY with 'FWD:' followed by the ID.
             3. For any question about class/study that you don't know, reply: "I dont know about this Let me ask my BOSS Mohsin :)"
             4. Use memory of previous chats to maintain context.
-            5. Stay brief (under 30 words) unless a longer explanation is absolutely necessary.
             """
 
             messages = [{"role": "system", "content": system_instructions}]
@@ -158,7 +156,6 @@ def receive_and_process():
                 )
                 answer = chat_completion.choices[0].message.content.strip()
                 
-                # Save Interaction to Memory
                 save_chat_history(sender_id, user_text, "user")
                 save_chat_history(sender_id, answer, "assistant")
 
@@ -175,7 +172,7 @@ def receive_and_process():
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (V6 - Fix SQL/Code) Online.")
+    print("🚀 IUB Assistant Online.")
     while True:
         try: receive_and_process()
         except: pass
