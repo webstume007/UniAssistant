@@ -6,8 +6,14 @@ from groq import Groq
 # 1. Configuration
 ID_INSTANCE = os.environ.get("GREEN_API_ID_INSTANCE")
 API_TOKEN = os.environ.get("GREEN_API_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY") # Add this to Railway Variables
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY") 
 BOT_PHONE = "923468415931" 
+
+# SAFETY CHECK: If the key is missing, don't crash, just wait.
+if not GROQ_API_KEY:
+    print("❌ ERROR: GROQ_API_KEY is not set in Railway Variables!")
+    time.sleep(60) # Give you time to read the log
+    exit(1)
 
 # Initialize Groq Client
 client = Groq(api_key=GROQ_API_KEY)
@@ -35,7 +41,7 @@ def receive_and_process():
         body = data.get("body", {})
         sender_id = body.get("senderData", {}).get("chatId", "")
         
-        # ANTI-LOOP: Don't process messages from the bot itself
+        # ANTI-LOOP
         if BOT_PHONE in sender_id:
             requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
@@ -44,39 +50,27 @@ def receive_and_process():
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "")
 
-        # TRIGGER: Listen specifically for @CR
+        # TRIGGER
         if user_text and "@cr" in user_text.lower():
-            print(f"📩 Groq Processing @CR request from {sender_id}...")
+            print(f"📩 Groq Processing @CR request...")
             context = get_knowledge()
             
             try:
-                # 2. CALL GROQ AI
-                # Model 'llama-3.3-70b-versatile' is fast and very smart.
+                # Use llama-3.3-70b-versatile for high quality
                 chat_completion = client.chat.completions.create(
                     messages=[
-                        {
-                            "role": "system",
-                            "content": f"You are a helpful IUB University Assistant. Context: {context}. Rule: Only answer class topics. For others, say 'Ask Mohsin'."
-                        },
-                        {
-                            "role": "user",
-                            "content": user_text,
-                        }
+                        {"role": "system", "content": f"You are IUB AI Assistant. Context: {context}. Only answer class topics."},
+                        {"role": "user", "content": user_text}
                     ],
                     model="llama-3.3-70b-versatile",
                 )
                 
                 answer = chat_completion.choices[0].message.content
-                if answer:
-                    send_message(sender_id, answer)
-                    print("📤 Groq Reply Sent!")
+                send_message(sender_id, answer)
+                print("📤 Groq Reply Sent!")
 
             except Exception as e:
                 print(f"⚠️ Groq Error: {e}")
-                if "429" in str(e):
-                    # Rate limit fallback to a smaller, faster model
-                    print("🔄 Rate limit hit, trying Llama 3.1 8B...")
-                    # Add secondary logic here if needed
 
         # Always delete the notification
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
