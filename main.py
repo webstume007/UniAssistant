@@ -12,8 +12,9 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 SUPA_URL = os.environ.get("SUPABASE_URL")
 SUPA_KEY = os.environ.get("SUPABASE_KEY")
 
+# MAKE SURE THESE ARE 100% CORRECT
 BOT_PHONE = "923468415931@c.us" 
-MOHSIN_PHONE = "923053296062@c.us" # Replace with your number
+MOHSIN_PHONE = "923XXXXXXXXX@c.us" # Replace with your personal number
 
 client = Groq(api_key=GROQ_API_KEY)
 supabase = create_client(SUPA_URL, SUPA_KEY)
@@ -21,20 +22,15 @@ BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
 
 last_reply_time = 0
 
-# --- 2. THE ORGANIZER FUNCTION (NEW) ---
+# --- 2. THE ORGANIZER FUNCTION ---
 
 def organize_and_save(raw_text):
-    """Uses Groq to structure messy text before saving to Supabase."""
     try:
-        organizer_prompt = f"""
-        You are a Data Organizer. Convert this messy WhatsApp message into a clear, 
-        factual sentence for a university database.
-        
-        MESSAGE: {raw_text}
-        
-        FORMAT: [Category]: [Fact]
-        Example: Class Timing: Machine Learning is moved to 10 AM.
-        """
+        # Don't try to organize a message that is already a confirmation
+        if "✅" in raw_text or "Organized & Saved" in raw_text:
+            return None
+
+        organizer_prompt = f"Convert this university update into a short factual sentence: {raw_text}"
         
         response = client.chat.completions.create(
             messages=[{"role": "user", "content": organizer_prompt}],
@@ -42,7 +38,6 @@ def organize_and_save(raw_text):
         )
         organized_text = response.choices[0].message.content
         
-        # Save the organized version to Cloud Memory
         supabase.table("knowledge").insert({"info": organized_text}).execute()
         return organized_text
     except Exception as e:
@@ -50,7 +45,6 @@ def organize_and_save(raw_text):
         return None
 
 def get_combined_knowledge():
-    """Combines text file and Supabase data."""
     cloud_data = ""
     try:
         data = supabase.table("knowledge").select("info").execute()
@@ -82,10 +76,12 @@ def receive_and_process():
         body = data.get("body", {})
         sender_id = body.get("senderData", {}).get("chatId", "")
 
-        # DELETE IMMEDIATELY TO PREVENT BURST
+        # 1. DELETE IMMEDIATELY
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
-        if BOT_PHONE in sender_id: return
+        # 2. STRICT SENDER FILTER (Stop the loop here)
+        if sender_id == BOT_PHONE:
+            return
 
         message_data = body.get("messageData", {})
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
@@ -93,29 +89,32 @@ def receive_and_process():
 
         if not user_text: return
 
-        # COOLDOWN CHECK
-        if time.time() - last_reply_time < 8: return
+        # 3. CONTENT FILTER (If the text looks like the bot's own success message, skip)
+        if "✅" in user_text or "Organized & Saved" in user_text:
+            return
 
-        # --- A. TEACHING MODE (MOHSIN ONLY) ---
+        # 4. COOLDOWN CHECK
+        if time.time() - last_reply_time < 5: return
+
+        # --- A. TEACHING MODE ---
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
-            # Organize and save in one step
             fact = organize_and_save(user_text)
             if fact:
                 send_message(sender_id, f"✅ Organized & Saved: {fact}")
                 last_reply_time = time.time()
             return
 
-        # --- B. ASSISTANT MODE (GROUP/@CR) ---
+        # --- B. ASSISTANT MODE ---
         if "@cr" in user_text.lower():
             # Show "typing..."
             requests.post(f"{BASE_URL}/setPresence/{API_TOKEN}", json={"chatId": sender_id, "presence": "composing"})
-            time.sleep(random.uniform(4, 7))
+            time.sleep(random.uniform(3, 5))
 
             context = get_combined_knowledge()
             try:
                 chat_completion = client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": f"Context: {context}. Rule: Be very brief (<20 words). No @ tags."},
+                        {"role": "system", "content": f"Context: {context}. Rule: Max 15 words. No @ tags."},
                         {"role": "user", "content": user_text}
                     ],
                     model="llama-3.3-70b-versatile",
@@ -123,15 +122,14 @@ def receive_and_process():
                 answer = chat_completion.choices[0].message.content
                 send_message(sender_id, answer.replace("@", ""))
                 last_reply_time = time.time()
-                print("📤 Safe Reply Sent.")
             except Exception as e:
                 print(f"⚠️ AI Error: {e}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Organizer Mode) Online.")
+    print("🚀 IUB Assistant (Anti-Loop Fixed) Online.")
     while True:
         try:
             receive_and_process()
         except Exception as e:
             print(f"⚠️ System Error: {e}")
-        time.sleep(3)
+        time.sleep(2)
