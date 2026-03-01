@@ -50,16 +50,25 @@ def receive_and_process():
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "")
 
-        # TRIGGER
+        # TRIGGER: Listen for @CR
         if user_text and "@cr" in user_text.lower():
             print(f"📩 Groq Processing @CR request...")
             context = get_knowledge()
             
             try:
-                # Use llama-3.3-70b-versatile for high quality
                 chat_completion = client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": f"You are IUB AI Assistant. Context: {context}. Only answer class topics."},
+                        {
+                            "role": "system", 
+                            "content": f"""
+                            You are the IUB Class Assistant. You answer to '@CR'.
+                            STRICT RULES:
+                            1. Reply in less than 20 words.
+                            2. Never mention you are a bot or who developed you unless asked.
+                            3. Use this context: {context}.
+                            4. If topic is not class-related, say: 'Only class queries please.'
+                            """
+                        },
                         {"role": "user", "content": user_text}
                     ],
                     model="llama-3.3-70b-versatile",
@@ -67,10 +76,7 @@ def receive_and_process():
                 
                 answer = chat_completion.choices[0].message.content
                 send_message(sender_id, answer)
-                print("📤 Groq Reply Sent!")
-
-            except Exception as e:
-                print(f"⚠️ Groq Error: {e}")
+                print("📤 Short Reply Sent!")
 
         # Always delete the notification
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
