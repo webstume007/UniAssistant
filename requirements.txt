@@ -1,1 +1,3 @@
-
+whatsapp-chatbot-python
+google-generativeai
+python-dotenv
