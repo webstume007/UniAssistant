@@ -1,41 +1,29 @@
-import os, time, requests
-from google import genai
+import os
+import time
+import requests
+from groq import Groq
 
-# 1. Configuration & Key Pool
+# 1. Configuration
 ID_INSTANCE = os.environ.get("GREEN_API_ID_INSTANCE")
 API_TOKEN = os.environ.get("GREEN_API_TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY") # Add this to Railway Variables
 BOT_PHONE = "923468415931" 
 
-# Collect all available keys into a list
-keys = [os.environ.get("GEMINI_API_KEY"), os.environ.get("GEMINI_KEY_2"), os.environ.get("GEMINI_KEY_3")]
-api_keys = [k for k in keys if k] # Remove empty ones
-current_key_index = 0
-
+# Initialize Groq Client
+client = Groq(api_key=GROQ_API_KEY)
 BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
 
-def get_ai_response(prompt):
-    global current_key_index
-    # We will try the model across our pool of keys
-    for _ in range(len(api_keys)):
-        try:
-            active_key = api_keys[current_key_index]
-            client = genai.Client(api_key=active_key)
-            
-            # Use the most stable 2026 model
-            response = client.models.generate_content(
-                model="gemini-2.0-flash-lite", 
-                contents=prompt
-            )
-            return response.text
-        except Exception as e:
-            if "429" in str(e):
-                print(f"⚠️ Key {current_key_index} exhausted. Rotating...")
-                current_key_index = (current_key_index + 1) % len(api_keys)
-                continue # Try again with the next key
-            else:
-                print(f"⚠️ AI Error: {e}")
-                return None
-    return "All AI keys are currently at their limit. Try again in 1 minute."
+def get_knowledge():
+    try:
+        with open("knowledge_base.txt", "r") as f:
+            return f.read()
+    except:
+        return "IUB AI Assistant for Semester 3. Developer: Mohsin Akhtar (Roll 1118)."
+
+def send_message(chat_id, text):
+    url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
+    payload = {"chatId": chat_id, "message": text}
+    requests.post(url, json=payload)
 
 def receive_and_process():
     receive_url = f"{BASE_URL}/receiveNotification/{API_TOKEN}"
@@ -47,6 +35,7 @@ def receive_and_process():
         body = data.get("body", {})
         sender_id = body.get("senderData", {}).get("chatId", "")
         
+        # ANTI-LOOP: Don't process messages from the bot itself
         if BOT_PHONE in sender_id:
             requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
@@ -55,25 +44,48 @@ def receive_and_process():
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "")
 
+        # TRIGGER: Listen specifically for @CR
         if user_text and "@cr" in user_text.lower():
-            print(f"📩 Processing @CR request via Key Index {current_key_index}...")
+            print(f"📩 Groq Processing @CR request from {sender_id}...")
+            context = get_knowledge()
             
-            # Keeping the prompt small saves 'Input Token' quota
-            system_info = "You are IUB AI Assistant. Only answer class info. Short answers only."
-            answer = get_ai_response(f"{system_info}\n\nQuestion: {user_text}")
-            
-            if answer:
-                url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
-                requests.post(url, json={"chatId": sender_id, "message": answer})
-                print("📤 Replied!")
+            try:
+                # 2. CALL GROQ AI
+                # Model 'llama-3.3-70b-versatile' is fast and very smart.
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": f"You are a helpful IUB University Assistant. Context: {context}. Rule: Only answer class topics. For others, say 'Ask Mohsin'."
+                        },
+                        {
+                            "role": "user",
+                            "content": user_text,
+                        }
+                    ],
+                    model="llama-3.3-70b-versatile",
+                )
+                
+                answer = chat_completion.choices[0].message.content
+                if answer:
+                    send_message(sender_id, answer)
+                    print("📤 Groq Reply Sent!")
 
+            except Exception as e:
+                print(f"⚠️ Groq Error: {e}")
+                if "429" in str(e):
+                    # Rate limit fallback to a smaller, faster model
+                    print("🔄 Rate limit hit, trying Llama 3.1 8B...")
+                    # Add secondary logic here if needed
+
+        # Always delete the notification
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print(f"🚀 IUB Bot Online with {len(api_keys)} API keys.")
+    print("🚀 IUB Assistant (GROQ MODE) is starting...")
     while True:
         try:
             receive_and_process()
         except Exception as e:
             print(f"⚠️ System Error: {e}")
-        time.sleep(1.5)
+        time.sleep(1)
