@@ -14,7 +14,7 @@ SUPA_KEY = os.environ.get("SUPABASE_KEY")
 
 # IDs must be in format "923XXXXXXXXX@c.us"
 BOT_PHONE = "923468415931@c.us" 
-MOHSIN_PHONE = "923XXXXXXXXX@c.us" # <--- REPLACE WITH YOUR NUMBER
+MOHSIN_PHONE = "923053296062@c.us" # <--- REPLACE WITH YOUR NUMBER
 
 client = Groq(api_key=GROQ_API_KEY)
 supabase = create_client(SUPA_URL, SUPA_KEY)
