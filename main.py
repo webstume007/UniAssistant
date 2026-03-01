@@ -42,35 +42,35 @@ def receive_and_process():
             user_text = message_data["extendedTextMessageData"].get("text", "")
 
         if user_text:
-            print(f"📩 Received: {user_text}")
-
-            # Check if bot is mentioned
-            if "bot" in user_text.lower():
-                print("🧠 AI thinking with Gemini 2.0...")
+            # 2. TRIGGER CHANGE: Only respond if '@cr' is mentioned
+            if "@cr" in user_text.lower():
+                print(f"📩 @CR mentioned by {chat_id}. Processing...")
                 context = get_knowledge()
                 
                 try:
-                    # UPDATED MODEL NAME FOR 2026
-                    ai_response = client.models.generate_content(
-                        model="gemini-2.0-flash", 
-                        contents=f"Context: {context}\n\nQuestion: {user_text}"
+                    # 3. MODEL CHANGE: Using 1.5-flash for better free quota
+                    response = client.models.generate_content(
+                        model="gemini-1.5-flash", 
+                        contents=f"Context: {context}\n\nStudent asked: {user_text}"
                     )
                     
-                    if ai_response.text:
-                        send_message(chat_id, ai_response.text)
-                        print("📤 Reply sent!")
+                    if response.text:
+                        send_message(chat_id, response.text)
+                        print("📤 Reply sent successfully!")
                 except Exception as ai_err:
-                    print(f"⚠️ Gemini Error: {ai_err}")
+                    print(f"⚠️ Gemini Quota Error: {ai_err}")
+                    # Optional: Tell the user to wait a minute
+                    send_message(chat_id, "System is busy. Please try again in 1 minute.")
 
-        # Delete notification so it doesn't loop
+        # Always delete the notification to keep the queue clear
         delete_url = f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}"
         requests.delete(delete_url)
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Direct Mode) is starting...")
+    print("🚀 IUB Assistant Active. Listening for @CR mentions...")
     while True:
         try:
             receive_and_process()
         except Exception as e:
             print(f"⚠️ System Error: {e}")
-        time.sleep(1)
+        time.sleep(1.5) # Slight delay to stay within API limits
