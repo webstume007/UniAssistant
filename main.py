@@ -25,7 +25,6 @@ last_reply_time = 0
 
 def save_to_db(info_text, msg_id=None):
     try:
-        # Save as a clean string
         data = {"info": str(info_text)}
         if msg_id:
             data["message_id"] = str(msg_id)
@@ -36,18 +35,16 @@ def save_to_db(info_text, msg_id=None):
         return False
 
 def get_combined_knowledge():
-    """Formats files clearly so the AI can't miss the IDs."""
     try:
         data = supabase.table("knowledge").select("info", "message_id").execute()
         context_lines = []
         for row in data.data:
             if row.get('message_id'):
-                # Make it EXTREMELY clear for the AI
                 context_lines.append(f"DATABASE_FILE: Name='{row['info']}', MessageID='{row['message_id']}'")
             else:
                 context_lines.append(f"FACT: {row['info']}")
         return "\n".join(context_lines)
-    except: return ""
+    except: return "No data in database yet."
 
 def send_message(chat_id, text):
     requests.post(f"{BASE_URL}/sendMessage/{API_TOKEN}", json={"chatId": chat_id, "message": text})
@@ -70,6 +67,7 @@ def receive_and_process():
         body = data.get("body", {})
         sender_id = body.get("senderData", {}).get("chatId", "")
         
+        # DELETE IMMEDIATELY
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
         if sender_id == BOT_PHONE: return
 
@@ -85,15 +83,14 @@ def receive_and_process():
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
             if type_msg == "documentMessage":
                 doc_info = message_data.get("documentMessageData", {})
-                # Use filename or caption
-                f_name = doc_info.get("fileName") or user_text or f"Doc_{int(time.time())}"
+                f_name = doc_info.get("fileName") or user_text or f"File_{int(time.time())}"
                 if save_to_db(f_name, msg_id=msg_id_received):
-                    send_message(sender_id, f"✅ Indexed: {f_name}")
+                    send_message(sender_id, f"✅ PDF Indexed: {f_name}")
                 return
 
             if user_text and "✅" not in user_text:
                 res = client.chat.completions.create(
-                    messages=[{"role": "user", "content": f"Briefly structure: {user_text}"}],
+                    messages=[{"role": "user", "content": f"Structure this: {user_text}"}],
                     model="llama-3.3-70b-versatile",
                 )
                 fact = res.choices[0].message.content
@@ -109,17 +106,21 @@ def receive_and_process():
             time.sleep(random.uniform(2, 4))
 
             context = get_combined_knowledge()
+            
+            # REFINED SYSTEM PROMPT FOR BETTER REPLIES
             prompt = f"""
             You are the IUB Assistant. 
-            CONTEXT:
+            CONTEXT FROM DATABASE:
             {context}
             
             USER REQUEST: {user_text}
             
             INSTRUCTIONS:
-            - If user wants a file, look for 'DATABASE_FILE' with a matching name.
-            - If match found, reply ONLY: FWD: [MessageID]
-            - If not found, reply naturally <20 words.
+            1. If the user asks for a file (PDF/Image), search the Context for a Name that matches.
+            2. If you find a matching 'DATABASE_FILE', reply ONLY with: FWD: [MessageID]
+            3. If you CANNOT find the file, reply naturally saying you don't have that file yet.
+            4. If it's a general question, use the 'FACTS' to answer briefly.
+            5. NEVER remain silent. Always provide a response.
             """
 
             try:
@@ -130,17 +131,19 @@ def receive_and_process():
                 answer = chat_completion.choices[0].message.content
 
                 if "FWD:" in answer:
-                    # Robust extraction
                     target_id = answer.replace("FWD:", "").strip()
                     forward_file(sender_id, target_id)
                 else:
+                    # Ensure no tags are in the final reply
                     send_message(sender_id, answer.replace("@", ""))
                 
                 last_reply_time = time.time()
-            except Exception as e: print(f"⚠️ Error: {e}")
+            except Exception as e:
+                print(f"⚠️ AI Error: {e}")
+                send_message(sender_id, "⚠️ I'm having trouble thinking right now. Please try again.")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (V3) Online...")
+    print("🚀 IUB Assistant (V4 - Always Reply) Online.")
     while True:
         try: receive_and_process()
         except: pass
