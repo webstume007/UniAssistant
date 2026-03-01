@@ -13,7 +13,7 @@ SUPA_KEY = os.environ.get("SUPABASE_KEY")
 
 # Replace with your actual IDs (e.g., "923001234567@c.us")
 BOT_PHONE = "923468415931@c.us" 
-MOHSIN_PHONE = "923XXXXXXXXX@c.us" 
+MOHSIN_PHONE = "923053296062@c.us" 
 
 # Initialize Clients
 client = Groq(api_key=GROQ_API_KEY)
