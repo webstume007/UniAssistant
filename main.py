@@ -103,16 +103,18 @@ def receive_and_process():
         # --- A. TEACHING MODE (MOHSIN) ---
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
             if type_msg == "documentMessage":
-                f_name = message_data.get("documentMessageData", {}).get("fileName") or user_text or "PDF"
+                doc_info = message_data.get("documentMessageData", {})
+                f_name = doc_info.get("fileName") or user_text or "PDF Document"
                 if save_to_db(f_name, msg_id=msg_id_received):
                     send_message(sender_id, f"✅ PDF '{f_name}' indexed for class access.")
             
             elif user_text and "✅" not in user_text:
+                # MODIFIED PROMPT: Prevents SQL/Code output
                 res = client.chat.completions.create(
-                    messages=[{"role": "user", "content": f"You are Mohsin's Personal Organizer. Structure this class update for the database: {user_text}"}],
+                    messages=[{"role": "user", "content": f"Briefly structure this class update for a database summary. IMPORTANT: Use plain text only. Do not write SQL, code, or technical explanations. Just the facts. Text: {user_text}"}],
                     model="llama-3.3-70b-versatile",
                 )
-                fact = res.choices[0].message.content
+                fact = res.choices[0].message.content.strip()
                 if save_to_db(fact):
                     send_message(sender_id, f"✅ Organized & Saved: {fact}")
             
@@ -131,17 +133,18 @@ def receive_and_process():
             kb_context = get_combined_knowledge()
             chat_mem = get_chat_history(sender_id)
             
-            # THE CORE INSTRUCTIONS (DO NOT MODIFY)
+            # THE CORE INSTRUCTIONS
             system_instructions = f"""
-            Persona: You are the 'Mohsins Personal Assistant', a bot for reducing burdon of BOSS Mohsin and helping class students at IUB. 
+            Persona: You are 'Mohsins Personal Assistant', a bot designed to reduce the burden of BOSS Mohsin and help class students at IUB. 
             Tone: Professional, helpful, and concise.
             Database Content: {kb_context}
             
             Rules:
-            - Primirly you are desinged to answer question about Class and study by data provided in database by CR.
-            - Try to answer minimal but also can reply long if needed.
-            1. Any Question about class or study about that you dont know reply "I dont know about this Let me ask my BOSS Mohsin :)"
-            2. If you don't know the answer, use your memory of previous chats to help, or say you don't have that info yet.
+            1. Primarily you are designed to answer questions about Class and study using the data provided in the database.
+            2. If a student asks for a file that is in the Database Content, reply ONLY with 'FWD:' followed by the ID. Example: 'FWD: 3EB0...'
+            3. For any question about class/study that you don't know, reply: "I dont know about this Let me ask my BOSS Mohsin :)"
+            4. Use memory of previous chats to maintain context.
+            5. Stay brief (under 30 words) unless a longer explanation is absolutely necessary.
             """
 
             messages = [{"role": "system", "content": system_instructions}]
@@ -153,7 +156,7 @@ def receive_and_process():
                     messages=messages,
                     model="llama-3.3-70b-versatile",
                 )
-                answer = chat_completion.choices[0].message.content
+                answer = chat_completion.choices[0].message.content.strip()
                 
                 # Save Interaction to Memory
                 save_chat_history(sender_id, user_text, "user")
@@ -172,7 +175,7 @@ def receive_and_process():
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Master Script) Online.")
+    print("🚀 IUB Assistant (V6 - Fix SQL/Code) Online.")
     while True:
         try: receive_and_process()
         except: pass
