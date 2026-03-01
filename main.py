@@ -1,48 +1,45 @@
-
 import os
-from dotenv import load_dotenv
+import google.generativeai as genai
 from whatsapp_chatbot_python import GreenAPIBot, Notification
-from brain import get_ai_response
 
-load_dotenv()
+# 1. Setup Gemini AI
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Load class data
-def load_context():
+# 2. Setup WhatsApp Bot
+bot = GreenAPIBot(
+    os.environ.get("GREEN_API_ID_INSTANCE"), 
+    os.environ.get("GREEN_API_TOKEN")
+)
+
+# 3. Load Knowledge Base
+def get_knowledge():
     try:
         with open("knowledge_base.txt", "r") as f:
             return f.read()
-    except FileNotFoundError:
-        return "No class data available."
-
-bot = GreenAPIBot(
-    os.getenv("GREEN_API_ID_INSTANCE"),
-    os.getenv("GREEN_API_TOKEN")
-)
+    except:
+        return "I am the IUB Assistant. My boss is Mohsin Akhtar."
 
 @bot.router.message(type_message="text")
 def message_handler(notification: Notification):
-    chat_id = notification.chat
     user_text = notification.message_text
     sender_name = notification.event_payload.get("senderData", {}).get("senderName", "Student")
-
-    # LOGIC: Only respond if the message is in a group AND the bot is mentioned
-    # You can change '@bot' to whatever your bot's name is in the group
-    if "@bot" in user_text.lower() or "assistant" in user_text.lower():
-        print(f"Group Query from {sender_name}: {user_text}")
-
-        # Clean the message (remove the @bot tag before sending to AI)
-        clean_query = user_text.lower().replace("@bot", "").strip()
-
-        # 1. Get the context
-        context = load_context()
-
-        # 2. Get the response from Gemini
-        ai_reply = get_ai_response(clean_query, context)
-
-        # 3. Reply to the group (tagging the sender)
-        final_message = f"@{sender_name}, {ai_reply}"
-        notification.answer(final_message)
+    
+    # Check if the bot is tagged
+    if "@bot" in user_text.lower():
+        print(f"Processing message from {sender_name}...")
+        
+        # Clean the query
+        query = user_text.lower().replace("@bot", "").strip()
+        
+        # Prepare Prompt
+        context = get_knowledge()
+        prompt = f"Context: {context}\n\nQuestion from {sender_name}: {query}\nAnswer:"
+        
+        # Generate and Send
+        response = model.generate_content(prompt)
+        notification.answer(f"@{sender_name} {response.text}")
 
 if __name__ == "__main__":
-    print("IUB Group Assistant is online and listening...")
+    print("Railway Bot is starting...")
     bot.run_forever()
