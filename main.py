@@ -12,15 +12,12 @@ BOT_PHONE = "923468415931"
 client = genai.Client(api_key=GEMINI_KEY)
 BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
 
-chat_memory = {}
-last_request_time = 0
-
 def get_knowledge():
     try:
         with open("knowledge_base.txt", "r") as f:
             return f.read()
     except:
-        return "I am the IUB AI Assistant. Developed by Mohsin Akhtar (Roll 1118)."
+        return "IUB AI Assistant for Semester 3. Boss: Mohsin Akhtar."
 
 def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
@@ -28,7 +25,6 @@ def send_message(chat_id, text):
     requests.post(url, json=payload)
 
 def receive_and_process():
-    global last_request_time
     receive_url = f"{BASE_URL}/receiveNotification/{API_TOKEN}"
     response = requests.get(receive_url)
     
@@ -39,7 +35,7 @@ def receive_and_process():
         
         sender_id = body.get("senderData", {}).get("chatId", "")
         
-        # ANTI-LOOP: Don't reply to yourself
+        # ANTI-LOOP: If bot sends a msg containing @cr, skip it
         if BOT_PHONE in sender_id:
             requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
             return
@@ -51,47 +47,35 @@ def receive_and_process():
         elif "extendedTextMessageData" in message_data:
             user_text = message_data["extendedTextMessageData"].get("text", "")
 
-        # Only trigger for @CR and ignore everything else
+        # TRIGGER: Only @CR and Class Topics
         if user_text and "@cr" in user_text.lower():
+            print(f"📩 @CR Request: {user_text}")
             
-            # Rate limiting check: Don't allow requests faster than every 4 seconds
-            current_time = time.time()
-            if current_time - last_request_time < 4:
-                print("⏳ Throttling: Request too fast.")
-                requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
-                return
-
-            print(f"📩 Processing @CR request from {sender_id}...")
             context = get_knowledge()
-            
-            # Simplified prompt to save tokens
-            system_instruction = f"You are IUB AI Assistant. Only answer class-related questions based on this: {context}. Otherwise, tell them to ask Mohsin."
+            # Strict Instruction to prevent random chat
+            system_msg = f"You are a strict University Assistant. Context: {context}. Rule: If the question isn't about the context, say 'Ask Mohsin'. Answer shortly."
 
             try:
-                # SWITCHED TO 1.5-FLASH FOR BETTER FREE QUOTA
-                ai_response = client.models.generate_content(
-                    model="gemini-1.5-flash", 
-                    contents=f"{system_instruction}\n\nUser: {user_text}"
+                # 2026 BEST STABLE FREE MODEL
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash-lite", 
+                    contents=f"{system_msg}\n\nQuestion: {user_text}"
                 )
                 
-                if ai_response.text:
-                    send_message(sender_id, ai_response.text)
-                    last_request_time = time.time()
-                    print("📤 Reply sent!")
-                    
-            except Exception as e:
-                if "429" in str(e):
-                    print("⚠️ QUOTA EXHAUSTED. Sleeping for 30s...")
-                    send_message(sender_id, "🚫 Bot is tired (Google Limit). Try again in 1 minute.")
-                    time.sleep(30) # Force a pause
-                else:
-                    print(f"⚠️ Error: {e}")
+                if response.text:
+                    send_message(sender_id, response.text)
+                    print("📤 Replied!")
 
-        # Always delete the notification
+            except Exception as e:
+                print(f"⚠️ AI Error: {e}")
+                if "429" in str(e):
+                    send_message(sender_id, "Rate limit hit. Try in 30 seconds.")
+
+        # Always delete notification
         requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Stable Mode) Started...")
+    print("🚀 IUB Assistant (Lite Mode) Started...")
     while True:
         try:
             receive_and_process()
