@@ -25,9 +25,10 @@ last_reply_time = 0
 
 def save_to_db(info_text, msg_id=None):
     try:
-        data = {"info": info_text}
+        # Save as a clean string
+        data = {"info": str(info_text)}
         if msg_id:
-            data["message_id"] = msg_id
+            data["message_id"] = str(msg_id)
         supabase.table("knowledge").insert(data).execute()
         return True
     except Exception as e:
@@ -35,17 +36,17 @@ def save_to_db(info_text, msg_id=None):
         return False
 
 def get_combined_knowledge():
-    """Pulls facts and labels files clearly for the AI."""
+    """Formats files clearly so the AI can't miss the IDs."""
     try:
         data = supabase.table("knowledge").select("info", "message_id").execute()
-        history = []
+        context_lines = []
         for row in data.data:
             if row.get('message_id'):
-                # We label it as 'FILE' to help the AI recognize it
-                history.append(f"FILE: '{row['info']}' (ID: {row['message_id']})")
+                # Make it EXTREMELY clear for the AI
+                context_lines.append(f"DATABASE_FILE: Name='{row['info']}', MessageID='{row['message_id']}'")
             else:
-                history.append(f"FACT: {row['info']}")
-        return "\n".join(history)
+                context_lines.append(f"FACT: {row['info']}")
+        return "\n".join(context_lines)
     except: return ""
 
 def send_message(chat_id, text):
@@ -54,7 +55,8 @@ def send_message(chat_id, text):
 def forward_file(chat_id, message_id):
     url = f"{BASE_URL}/forwardMessages/{API_TOKEN}"
     payload = {"chatId": chat_id, "messages": [message_id]}
-    requests.post(url, json=payload)
+    res = requests.post(url, json=payload)
+    print(f"🚀 Forwarding Attempt: {res.status_code} | ID: {message_id}")
 
 # --- 3. MAIN LOGIC ---
 
@@ -75,56 +77,49 @@ def receive_and_process():
         msg_id_received = body.get("idMessage")
         type_msg = message_data.get("typeMessage")
         
-        # Extract Text/Caption
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "") or \
                     message_data.get("documentMessageData", {}).get("caption", "") or ""
 
         # --- A. TEACHING MODE (MOHSIN) ---
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
-            
-            # --- HANDLE PDF (FIXED NAMING) ---
             if type_msg == "documentMessage":
                 doc_info = message_data.get("documentMessageData", {})
-                
-                # FIX: Prioritize real filename over static text
-                real_filename = doc_info.get("fileName")
-                save_name = real_filename if real_filename else (user_text if user_text else "Unnamed_File")
-                
-                if save_to_db(save_name, msg_id=msg_id_received):
-                    send_message(sender_id, f"✅ Indexed PDF: {save_name}")
+                # Use filename or caption
+                f_name = doc_info.get("fileName") or user_text or f"Doc_{int(time.time())}"
+                if save_to_db(f_name, msg_id=msg_id_received):
+                    send_message(sender_id, f"✅ Indexed: {f_name}")
                 return
 
-            # --- HANDLE TEXT UPDATE ---
             if user_text and "✅" not in user_text:
                 res = client.chat.completions.create(
-                    messages=[{"role": "user", "content": f"Structure this: {user_text}"}],
+                    messages=[{"role": "user", "content": f"Briefly structure: {user_text}"}],
                     model="llama-3.3-70b-versatile",
                 )
                 fact = res.choices[0].message.content
                 if save_to_db(fact):
-                    send_message(sender_id, f"✅ Saved Fact: {fact}")
+                    send_message(sender_id, f"✅ Saved: {fact}")
             return
 
         # --- B. ASSISTANT MODE (GROUP) ---
         if "@cr" in user_text.lower():
-            if time.time() - last_reply_time < 8: return
+            if time.time() - last_reply_time < 5: return
 
             requests.post(f"{BASE_URL}/setPresence/{API_TOKEN}", json={"chatId": sender_id, "presence": "composing"})
-            time.sleep(random.uniform(4, 7))
+            time.sleep(random.uniform(2, 4))
 
             context = get_combined_knowledge()
-            
-            # UPDATED SEARCH PROMPT
             prompt = f"""
-            Context: {context}
-            User Question: {user_text}
+            You are the IUB Assistant. 
+            CONTEXT:
+            {context}
             
-            Instruction:
-            1. Search the Context for any 'FILE' that matches the user's request keywords.
-            2. If a match is found, reply ONLY with 'FWD:' + the ID associated with that file.
-            3. If multiple files match, pick the most relevant one.
-            4. If no file matches, provide a short natural answer based on 'FACTS'.
+            USER REQUEST: {user_text}
+            
+            INSTRUCTIONS:
+            - If user wants a file, look for 'DATABASE_FILE' with a matching name.
+            - If match found, reply ONLY: FWD: [MessageID]
+            - If not found, reply naturally <20 words.
             """
 
             try:
@@ -135,18 +130,18 @@ def receive_and_process():
                 answer = chat_completion.choices[0].message.content
 
                 if "FWD:" in answer:
-                    target_id = answer.split("FWD:")[1].strip()
+                    # Robust extraction
+                    target_id = answer.replace("FWD:", "").strip()
                     forward_file(sender_id, target_id)
-                    print(f"➡️ Forwarded File ID: {target_id}")
                 else:
                     send_message(sender_id, answer.replace("@", ""))
                 
                 last_reply_time = time.time()
-            except Exception as e: print(f"⚠️ AI Error: {e}")
+            except Exception as e: print(f"⚠️ Error: {e}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (File Naming Fixed) Online.")
+    print("🚀 IUB Assistant (V3) Online...")
     while True:
         try: receive_and_process()
         except: pass
-        time.sleep(2.5)
+        time.sleep(2)
