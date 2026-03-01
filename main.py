@@ -57,3 +57,4 @@ def message_handler(notification: Notification):
 if __name__ == "__main__":
     print("✅ IUB Assistant is Connected and Listening on Railway!")
     bot.run_forever()
+
