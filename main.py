@@ -7,17 +7,20 @@ from google import genai
 ID_INSTANCE = os.environ.get("GREEN_API_ID_INSTANCE")
 API_TOKEN = os.environ.get("GREEN_API_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+BOT_PHONE = "923468415931"  # <--- UPDATE THIS TO YOUR BOT'S NUMBER
 
-# 2. Setup AI with the modern 2.5-Flash model
 client = genai.Client(api_key=GEMINI_KEY)
 BASE_URL = f"https://7103.api.greenapi.com/waInstance{ID_INSTANCE}"
+
+# Simple Memory Storage (Last 5 messages per chat)
+chat_memory = {}
 
 def get_knowledge():
     try:
         with open("knowledge_base.txt", "r") as f:
             return f.read()
     except:
-        return "I am the IUB Assistant. Developed by Mohsin Akhtar (Roll 1118)."
+        return "I am the IUB AI Assistant for 3rd Semester. My boss is Mohsin Akhtar."
 
 def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
@@ -33,46 +36,67 @@ def receive_and_process():
         receipt_id = data.get("receiptId")
         body = data.get("body", {})
         
-        chat_id = body.get("senderData", {}).get("chatId")
-        message_data = body.get("messageData", {})
+        # 2. ANTI-LOOP: Check sender
+        sender_data = body.get("senderData", {})
+        sender_id = sender_data.get("chatId", "") # Looks like 923xx@c.us
+        chat_id = sender_id # The group or private chat ID
         
+        # If the message is from the bot itself, delete and skip
+        if BOT_PHONE in sender_id:
+            requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
+            return
+
+        message_data = body.get("messageData", {})
         user_text = ""
         if "textMessageData" in message_data:
             user_text = message_data["textMessageData"].get("textMessage", "")
         elif "extendedTextMessageData" in message_data:
             user_text = message_data["extendedTextMessageData"].get("text", "")
 
-        if user_text:
-            # TRIGGER: Only respond if '@cr' is mentioned
-            if "@cr" in user_text.lower():
-                print(f"📩 @CR mentioned! Processing query...")
-                context = get_knowledge()
-                
-                try:
-                    # Using the best stable model for 2026
-                    ai_response = client.models.generate_content(
-                        model="gemini-2.5-flash", 
-                        contents=f"Context: {context}\n\nStudent asked: {user_text}"
-                    )
-                    
-                    if ai_response.text:
-                        send_message(chat_id, ai_response.text)
-                        print("📤 Reply sent successfully!")
-                except Exception as ai_err:
-                    print(f"⚠️ AI Error: {ai_err}")
-                    # Only notify if it's a speed limit issue
-                    if "429" in str(ai_err):
-                        send_message(chat_id, "Wait 30 seconds before asking @CR again.")
+        if user_text and "@cr" in user_text.lower():
+            print(f"📩 Processing @CR request from {sender_id}...")
+            
+            # 3. MEMORY LOGIC: Get previous context
+            if chat_id not in chat_memory:
+                chat_memory[chat_id] = []
+            
+            history = "\n".join(chat_memory[chat_id])
+            context = get_knowledge()
+            
+            # 4. SYSTEM INSTRUCTION (The Class-Only Filter)
+            system_prompt = f"""
+            SYSTEM: You are the IUB AI Assistant. 
+            RULES: 
+            1. ONLY answer questions about IUB, AI Dept, Semester 3, and Class tasks.
+            2. If the user asks about unrelated topics (politics, sports, general chat), politely say: 'I only handle IUB Class matters. Ask Mohsin for other things.'
+            3. Use the following Knowledge Base: {context}
+            4. Previous conversation: {history}
+            """
 
-        # Always delete the notification so we don't get stuck in a loop
-        delete_url = f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}"
-        requests.delete(delete_url)
+            try:
+                ai_response = client.models.generate_content(
+                    model="gemini-2.0-flash", # Use 2.0 or 1.5 based on what worked last
+                    contents=f"{system_prompt}\n\nStudent: {user_text}"
+                )
+                
+                if ai_response.text:
+                    send_message(chat_id, ai_response.text)
+                    # Update memory (keep last 5)
+                    chat_memory[chat_id].append(f"Student: {user_text}")
+                    chat_memory[chat_id].append(f"Bot: {ai_response.text}")
+                    chat_memory[chat_id] = chat_memory[chat_id][-10:] # 5 pairs
+                    print("📤 Reply sent!")
+            except Exception as e:
+                print(f"⚠️ AI Error: {e}")
+
+        # Always delete the notification
+        requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant (Direct Mode) is Online. Listening for @CR...")
+    print("🚀 IUB Assistant (Memory & Anti-Loop) Started...")
     while True:
         try:
             receive_and_process()
         except Exception as e:
-            print(f"⚠️ System Error: {e}")
-        time.sleep(2) # 2-second gap prevents hitting speed limits
+            print(f"⚠️ Error: {e}")
+        time.sleep(1)
