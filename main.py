@@ -16,7 +16,7 @@ def get_knowledge():
         with open("knowledge_base.txt", "r") as f:
             return f.read()
     except:
-        return "I am the IUB AI Assistant. Developed by Mohsin Akhtar."
+        return "I am the IUB AI Assistant. Developed by Mohsin Akhtar (Roll 1118)."
 
 def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage/{API_TOKEN}"
@@ -42,35 +42,36 @@ def receive_and_process():
             user_text = message_data["extendedTextMessageData"].get("text", "")
 
         if user_text:
-            # 2. TRIGGER CHANGE: Only respond if '@cr' is mentioned
+            # 2. TRIGGER: Only respond if '@cr' is mentioned
             if "@cr" in user_text.lower():
-                print(f"📩 @CR mentioned by {chat_id}. Processing...")
+                print(f"📩 @CR mentioned. Processing for {chat_id}...")
                 context = get_knowledge()
                 
                 try:
-                    # 3. MODEL CHANGE: Using 1.5-flash for better free quota
+                    # 3. MODEL: Using 1.5-flash for a stable free quota
                     response = client.models.generate_content(
                         model="gemini-1.5-flash", 
-                        contents=f"Context: {context}\n\nStudent asked: {user_text}"
+                        contents=f"Context: {context}\n\nQuestion: {user_text}"
                     )
                     
                     if response.text:
                         send_message(chat_id, response.text)
-                        print("📤 Reply sent successfully!")
+                        print("📤 Reply sent!")
                 except Exception as ai_err:
                     print(f"⚠️ Gemini Quota Error: {ai_err}")
-                    # Optional: Tell the user to wait a minute
-                    send_message(chat_id, "System is busy. Please try again in 1 minute.")
+                    # Only notify the user if it's a real quota issue
+                    if "429" in str(ai_err):
+                        send_message(chat_id, "Too many requests. Please wait a minute before asking @CR again.")
 
-        # Always delete the notification to keep the queue clear
+        # Always delete the notification so we don't process it again
         delete_url = f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}"
         requests.delete(delete_url)
 
 if __name__ == "__main__":
-    print("🚀 IUB Assistant Active. Listening for @CR mentions...")
+    print("🚀 IUB Assistant Active. Only listening for @CR...")
     while True:
         try:
             receive_and_process()
         except Exception as e:
             print(f"⚠️ System Error: {e}")
-        time.sleep(1.5) # Slight delay to stay within API limits
+        time.sleep(1.5) # Small delay to be safe
