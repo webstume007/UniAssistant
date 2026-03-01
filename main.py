@@ -39,7 +39,7 @@ def message_handler(notification: Notification):
     user_text = notification.message_text
     sender_name = notification.event_payload.get("senderData", {}).get("senderName", "Student")
     
-    if "@bot" in user_text.lower():
+    if "bot" in user_text.lower() or "assistant" in user_text.lower():
         print(f"Processing query from {sender_name}...")
         query = user_text.lower().replace("@bot", "").strip()
         context = get_knowledge()
