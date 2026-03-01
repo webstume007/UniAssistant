@@ -24,7 +24,6 @@ def send_message(chat_id, text):
     requests.post(url, json=payload)
 
 def receive_and_process():
-    # Check for new messages
     receive_url = f"{BASE_URL}/receiveNotification/{API_TOKEN}"
     response = requests.get(receive_url)
     
@@ -33,32 +32,37 @@ def receive_and_process():
         receipt_id = data.get("receiptId")
         body = data.get("body", {})
         
-        # Get Chat ID and Text
         chat_id = body.get("senderData", {}).get("chatId")
         message_data = body.get("messageData", {})
         
         user_text = ""
-        # Finding the text in different possible formats
         if "textMessageData" in message_data:
             user_text = message_data["textMessageData"].get("textMessage", "")
         elif "extendedTextMessageData" in message_data:
             user_text = message_data["extendedTextMessageData"].get("text", "")
 
         if user_text:
-            print(f"📩 New Message from {chat_id}: {user_text}")
+            print(f"📩 Received: {user_text}")
 
-            # Respond if 'bot' or '@bot' is mentioned
+            # Check if bot is mentioned
             if "bot" in user_text.lower():
-                print("🧠 AI is thinking...")
+                print("🧠 AI thinking with Gemini 2.0...")
                 context = get_knowledge()
-                ai_response = client.models.generate_content(
-                    model="gemini-1.5-flash",
-                    contents=f"Context: {context}\n\nStudent asked: {user_text}"
-                )
-                send_message(chat_id, ai_response.text)
-                print("📤 Reply sent!")
+                
+                try:
+                    # UPDATED MODEL NAME FOR 2026
+                    ai_response = client.models.generate_content(
+                        model="gemini-2.0-flash", 
+                        contents=f"Context: {context}\n\nQuestion: {user_text}"
+                    )
+                    
+                    if ai_response.text:
+                        send_message(chat_id, ai_response.text)
+                        print("📤 Reply sent!")
+                except Exception as ai_err:
+                    print(f"⚠️ Gemini Error: {ai_err}")
 
-        # CRITICAL: Delete notification so it doesn't loop
+        # Delete notification so it doesn't loop
         delete_url = f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}"
         requests.delete(delete_url)
 
@@ -68,5 +72,5 @@ if __name__ == "__main__":
         try:
             receive_and_process()
         except Exception as e:
-            print(f"⚠️ Error: {e}")
-        time.sleep(2) # Checks every 2 seconds
+            print(f"⚠️ System Error: {e}")
+        time.sleep(1)
