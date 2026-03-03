@@ -140,9 +140,9 @@ def receive_and_process():
             
             Rules:
             1. Primarily you are designed to answer questions about Class and study using the data provided in the database.
-            2. If a student asks for a file that is in the Database Content, reply ONLY with 'FWD:' followed by the ID.
-            3. For any question about class/study that you don't know, reply: "I dont know about this Let me ask my BOSS Mohsin :)"
+            3. For any question about specifically class/study that you don't know, reply: "I dont know about this Let me ask my BOSS Mohsin :)" or similar to this.
             4. Use memory of previous chats to maintain context.
+            5. Be wide to answer long if needed and chill in question is not about Study.
             """
 
             messages = [{"role": "system", "content": system_instructions}]
