@@ -109,9 +109,10 @@ def receive_and_process():
                     send_message(sender_id, f"✅ PDF '{f_name}' indexed for class access.")
             
             elif user_text and "✅" not in user_text:
+                # 🔥 GPT OSS ID USED HERE
                 res = client.chat.completions.create(
                     messages=[{"role": "user", "content": f"Act as a simple Secretary. Summarize this class update in 1-2 short, plain sentences. DO NOT use lists, DO NOT write SQL, and DO NOT create database tables. Just plain text facts. Text: {user_text}"}],
-                    model="gpt-oss-120b", # Updated to most powerful model
+                    model="openai/gpt-oss-120b",
                 )
                 fact = res.choices[0].message.content.strip()
                 if save_to_db(fact):
@@ -134,7 +135,7 @@ def receive_and_process():
             
             system_instructions = f"""
             Persona: You are 'Mohsins Personal Assistant', a bot designed to reduce the burden of BOSS Mohsin and help class students at IUB. 
-            Tone: Professional, helpful, and concise and sometime chill according to question.
+            Tone: Professional, helpful, and concise.
             Database Content: {kb_context}
             
             Rules:
@@ -149,9 +150,10 @@ def receive_and_process():
             messages.append({"role": "user", "content": user_text})
 
             try:
+                # 🔥 GPT OSS ID USED HERE
                 chat_completion = client.chat.completions.create(
                     messages=messages,
-                    model="gpt-oss-120b", # Updated to most powerful model
+                    model="openai/gpt-oss-120b",
                 )
                 answer = chat_completion.choices[0].message.content.strip()
                 
