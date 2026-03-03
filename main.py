@@ -164,8 +164,8 @@ def receive_and_process():
             return
 
         # --- B. ASSISTANT MODE (GROUP/@CR) ---
-        # Trigger if "@cr" is explicitly mentioned OR if the user replied to a bot's message
-        if "@cr" in user_text.lower() or (quoted_msg_data and sender_id != MOHSIN_PHONE):
+        # Trigger STRICTLY if "@cr" is explicitly mentioned in the text
+        if "@cr" in user_text.lower():
             if time.time() - last_reply_time < 6:
                 requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
                 return
