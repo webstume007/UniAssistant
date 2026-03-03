@@ -37,14 +37,19 @@ def format_for_whatsapp(text):
     """
     Converts standard markdown/text into WhatsApp specific formatting.
     - Markdown **bold** -> WhatsApp *bold*
-    - Markdown *italic* -> WhatsApp _italic_
+    - Removes markdown *italic* completely
+    - Markdown bullets -> WhatsApp dash bullets (-)
     """
-    # Replace **text** with *text*
+    # Replace **text** with *text* for WhatsApp bold
     text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
-    # Replace markdown single *italic* with _italic_ (avoiding the ones we just made bold)
-    text = re.sub(r'(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)', r'_\1_', text)
-    # Ensure lists don't break
-    text = text.replace("- ", "• ")
+    
+    # Remove single asterisks (italics) entirely to prevent formatting issues
+    text = re.sub(r'(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)', r'\1', text)
+    
+    # Ensure lists use dashes
+    text = text.replace("• ", "- ")
+    text = re.sub(r'^[\*\+] ', '- ', text, flags=re.MULTILINE)
+    
     return text.strip()
 
 
@@ -52,7 +57,6 @@ def format_for_whatsapp(text):
 
 def save_to_db(info_text, msg_id=None):
     try:
-        # We inject the current date/time when saving a fact so the bot knows how old it is
         timestamped_info = f"[Saved on: {get_current_pkt_time()}] {info_text}"
         data = {"info": str(timestamped_info)}
         if msg_id: data["message_id"] = str(msg_id)
@@ -126,9 +130,18 @@ def receive_and_process():
         msg_id_received = body.get("idMessage")
         type_msg = message_data.get("typeMessage")
         
+        # Extract main text
         user_text = message_data.get("textMessageData", {}).get("textMessage", "") or \
                     message_data.get("extendedTextMessageData", {}).get("text", "") or \
                     message_data.get("documentMessageData", {}).get("caption", "") or ""
+
+        # Check if user is replying to a specific message (tagged message)
+        quoted_msg_data = message_data.get("extendedTextMessageData", {}).get("stanzaId", None)
+        quoted_text = message_data.get("extendedTextMessageData", {}).get("matchedText", "")
+        
+        # If there is a quoted message, append it to the user's input so the bot has context
+        if quoted_text:
+            user_text = f"[User is replying to this previous text: '{quoted_text}']\nUser's new message: {user_text}"
 
         # --- A. TEACHING MODE (MOHSIN) ---
         if sender_id == MOHSIN_PHONE and "@cr" not in user_text.lower():
@@ -151,7 +164,8 @@ def receive_and_process():
             return
 
         # --- B. ASSISTANT MODE (GROUP/@CR) ---
-        if "@cr" in user_text.lower():
+        # Trigger if "@cr" is explicitly mentioned OR if the user replied to a bot's message
+        if "@cr" in user_text.lower() or (quoted_msg_data and sender_id != MOHSIN_PHONE):
             if time.time() - last_reply_time < 6:
                 requests.delete(f"{BASE_URL}/deleteNotification/{API_TOKEN}/{receipt_id}")
                 return
@@ -165,7 +179,7 @@ def receive_and_process():
             
             system_instructions = f"""
             Persona: You are 'Mohsins Personal Assistant', a bot designed to reduce the burden of BOSS Mohsin and help class students at IUB. 
-            Tone: Professional, Dramatic, Chill, helpful, and concise. Format your text nicely for WhatsApp, dont italic fonts at all.
+            Tone: Professional, Dramatic, Chill, helpful, and concise. Format your text nicely for WhatsApp. DO NOT use italic fonts at all.
             
             CURRENT TIME (Bahawalpur, PKT): {current_time}
             
@@ -173,10 +187,12 @@ def receive_and_process():
             
             Rules:
             1. Primarily answer questions about Class and study using the data provided in the database.
-            2. IMPORTANT TIME RULE: Look at the [Saved on: Date] tags in the database. If a database fact mentions a lecture schedule or a temporary update that has already passed according to the CURRENT TIME above, consider that information USELESS and EXPIRED. Do not give students expired lecture times.
-            3. For any question about specifically class/study that you don't know or if the info is expired, reply: "I dont know about this Let me ask my BOSS Mohsin :)" or similar to this.
-            4. Use memory of previous chats to maintain context.
-            5. Be Dramatic and chill to answer if needed and when question is not about Study.
+            2. STRICT RULE: Stick ONLY to answering the specific question asked. Do not provide unprompted advice or extra information unless the user explicitly asks for it.
+            3. NO TABLES: NEVER use markdown tables (|...|...|) to show schedules or data. Always output schedules line-by-line using standard dashes (-).
+            4. IMPORTANT TIME RULE: Look at the [Saved on: Date] tags in the database. If a database fact mentions a lecture schedule or a temporary update that has already passed according to the CURRENT TIME above, consider that information USELESS and EXPIRED. Do not give students expired lecture times.
+            5. For any question about specifically class/study that you don't know or if the info is expired, reply: "I dont know about this Let me ask my BOSS Mohsin :)" or similar to this.
+            6. Use memory of previous chats to maintain context.
+            7. Be Dramatic and chill to answer if needed and when question is not about Study.
             """
 
             messages = [{"role": "system", "content": system_instructions}]
@@ -190,7 +206,9 @@ def receive_and_process():
                 )
                 answer = chat_completion.choices[0].message.content.strip()
                 
-                save_chat_history(sender_id, user_text, "user")
+                # Only save the raw text to history to keep context clean
+                clean_user_text = message_data.get("textMessageData", {}).get("textMessage", "") or message_data.get("extendedTextMessageData", {}).get("text", "")
+                save_chat_history(sender_id, clean_user_text, "user")
                 save_chat_history(sender_id, answer, "assistant")
 
                 if "FWD:" in answer:
