@@ -176,7 +176,7 @@ def receive_and_process():
             2. IMPORTANT TIME RULE: Look at the [Saved on: Date] tags in the database. If a database fact mentions a lecture schedule or a temporary update that has already passed according to the CURRENT TIME above, consider that information USELESS and EXPIRED. Do not give students expired lecture times.
             3. For any question about specifically class/study that you don't know or if the info is expired, reply: "I dont know about this Let me ask my BOSS Mohsin :)" or similar to this.
             4. Use memory of previous chats to maintain context.
-            5. Be wide to answer long if needed and chill in question is not about Study.
+            5. Be chill to answer if needed and when question is not about Study.
             """
 
             messages = [{"role": "system", "content": system_instructions}]
